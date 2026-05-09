@@ -1,4 +1,5 @@
 """QQ Bot 独立守护进程 — 不依赖 MCP，单独运行"""
+import os
 import sys
 import time
 import logging
@@ -7,6 +8,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from qq_bridge.config import get_settings, PROJECT_ROOT
+
+# --- Kill old instances ---
+PID_FILE = PROJECT_ROOT / "data" / "bot.pid"
+PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+if PID_FILE.exists():
+    old_pid = PID_FILE.read_text().strip()
+    try:
+        import subprocess
+        subprocess.run(["taskkill", "/F", "/PID", old_pid], capture_output=True)
+    except Exception:
+        pass
+PID_FILE.write_text(str(os.getpid()))
 
 # Setup logging
 log_file = PROJECT_ROOT / "logs" / "bot.log"
