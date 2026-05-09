@@ -95,12 +95,18 @@ class QQBotClient(botpy.Client):
         else:
             url = f"{API_BASE}/v2/users/{item['target_id']}/messages"
 
-        # Auto-detect markdown: msg_type 2 for markdown, 0 for text
+        # Auto-detect markdown and use proper QQ markdown format
         is_md = any(marker in item['content'] for marker in ['#', '**', '```', '|', '- ', '> '])
-        payload = {
-            "content": item['content'],
-            "msg_type": 2 if is_md else 0,
-        }
+        if is_md:
+            payload = {
+                "msg_type": 2,
+                "markdown": {"content": item['content']},
+            }
+        else:
+            payload = {
+                "content": item['content'],
+                "msg_type": 0,
+            }
 
         try:
             async with aiohttp.ClientSession() as session:
