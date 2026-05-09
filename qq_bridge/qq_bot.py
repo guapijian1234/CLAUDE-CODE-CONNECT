@@ -1,27 +1,31 @@
 """QQ Bot WebSocket 客户端 — 接收消息、轮询发件箱发送回复"""
 
 import asyncio
+import json
 import logging
 import threading
-import uuid
-from pathlib import Path
 
+import aiohttp
 import botpy
 from botpy.message import GroupMessage, C2CMessage
 
-from .config import get_settings, PROJECT_ROOT
+from .config import get_settings
 from . import storage
 
 logger = logging.getLogger("qq_bridge.bot")
 
+API_BASE = "https://api.sgroup.qq.com"
 _bot_running = False
 _bot_error: str | None = None
+_access_token: str | None = None
 
 
 class QQBotClient(botpy.Client):
     """QQ 机器人客户端，在后台线程中运行"""
 
     async def on_ready(self):
+        global _access_token
+        _access_token = self.access_token
         logger.info("QQ Bot connected and ready")
         asyncio.create_task(self._poll_outbox())
 
@@ -30,7 +34,7 @@ class QQBotClient(botpy.Client):
         if not content:
             return
         logger.info(
-            "Received group message id=%s author=%s content=%s",
+            "Received group@ msg id=%s author=%s content=%s",
             message.id, message.author.member_openid, content[:50]
         )
         storage.insert_message(
@@ -48,7 +52,7 @@ class QQBotClient(botpy.Client):
         if not content.strip():
             return
         logger.info(
-            "Received c2c message id=%s author=%s content=%s",
+            "Received c2c msg id=%s author=%s content=%s",
             message.id, message.author.user_openid, content[:50]
         )
         storage.insert_message(
@@ -73,21 +77,14 @@ class QQBotClient(botpy.Client):
 
     async def _send_outbox_item(self, item: dict):
         try:
-            msg_id = str(uuid.uuid4())
-            if item['chat_type'] == 'group':
-                await self.api.post_group_message(
-                    group_openid=item['target_id'],
-                    content=item['content'],
-                    msg_id=msg_id,
-                )
-            elif item['chat_type'] == 'c2c':
-                await self.api.post_c2c_message(
-                    openid=item['target_id'],
-                    content=item['content'],
-                    msg_id=msg_id,
-                )
+            await _send_qq_message(
+                chat_type=item['chat_type'],
+                target_id=item['target_id'],
+                content=item['content'],
+                reply_msg_id=item.get('reply_msg_id'),
+            )
             storage.mark_outbox_sent(item['id'])
-            logger.info("Sent outbox #%d to %s:%s", item['id'], item['chat_type'], item['target_id'])
+            logger.info("Sent outbox #%d -> %s:%s", item['id'], item['chat_type'], item['target_id'])
         except Exception as e:
             logger.error("Failed to send outbox #%d: %s", item['id'], e)
             storage.mark_outbox_failed(item['id'], str(e))
@@ -103,8 +100,41 @@ class QQBotClient(botpy.Client):
         return content.strip()
 
 
+async def _send_qq_message(*, chat_type: str, target_id: str, content: str,
+                           reply_msg_id: str | None = None):
+    """直接通过 HTTP API 发送 QQ 消息，绕过 botpy 的 payload 处理"""
+    token = _access_token
+    if not token:
+        raise RuntimeError("Bot not connected, no access token")
+
+    headers = {
+        "Authorization": f"QQBot {token}",
+        "Content-Type": "application/json",
+    }
+
+    if chat_type == 'group':
+        url = f"{API_BASE}/v2/groups/{target_id}/messages"
+    else:
+        url = f"{API_BASE}/v2/users/{target_id}/messages"
+
+    payload = {
+        "content": content,
+        "msg_type": 0,
+    }
+    if reply_msg_id:
+        payload["msg_id"] = reply_msg_id
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=payload) as resp:
+            body = await resp.text()
+            if resp.status != 200:
+                raise RuntimeError(f"HTTP {resp.status}: {body}")
+
+    logger.info("QQ API send OK: %s:%s content_len=%d", chat_type, target_id, len(content))
+
+
 def _run_bot():
-    global _bot_running, _bot_error
+    global _bot_running, _bot_error, _access_token
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
@@ -123,6 +153,7 @@ def _run_bot():
     except Exception as e:
         _bot_error = str(e)
         _bot_running = False
+        _access_token = None
         logger.error("Bot failed: %s", e)
 
 
