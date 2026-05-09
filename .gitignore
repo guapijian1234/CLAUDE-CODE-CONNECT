@@ -1,4 +1,4 @@
-# 凭据
+# Secrets
 .env
 
 # Python
@@ -9,20 +9,20 @@ __pycache__/
 dist/
 build/
 
-# 数据库
+# Database
 *.db
 *.db-wal
 *.db-shm
 
-# 日志
+# Logs
 *.log
 
-# 临时数据
+# Runtime files
 data/msg*.txt
 data/bot.pid
 .claude/scheduled_tasks.lock
 
-# 虚拟环境
+# Virtual environments
 venv/
 .venv/
 

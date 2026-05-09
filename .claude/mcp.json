@@ -2,7 +2,7 @@
   "mcpServers": {
     "qq-bridge": {
       "command": "python",
-      "args": ["-m", "qq_bridge"],
+      "args": ["-m", "qq_bridge", "mcp"],
       "cwd": "C:\\Users\\Administrator\\Desktop\\CLAUDE CODE CONNECT"
     }
   }

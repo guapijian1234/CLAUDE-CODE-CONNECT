@@ -1,19 +1,37 @@
-"""配置管理 — 从 .env 文件和环境变量加载设置"""
+"""Runtime configuration for the QQ bridge."""
 
-import os
+from __future__ import annotations
+
+from functools import lru_cache
 from pathlib import Path
+
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
-class Settings(BaseSettings):
-    """QQ Bridge 配置，从 .env 文件或环境变量加载"""
+def _split_csv(value: str) -> set[str]:
+    return {item.strip() for item in value.split(",") if item.strip()}
 
+
+class Settings(BaseSettings):
     bot_app_id: str = ""
     bot_app_secret: str = ""
+
     db_path: str = "data/bridge.db"
     log_level: str = "INFO"
+    log_path: str = "logs/qq_bridge.log"
+
+    allowed_users: str = ""
+    allowed_groups: str = ""
+    message_chunk_size: int = Field(default=1800, ge=200, le=4000)
+    markdown_enabled: bool = True
+    markdown_fallback_to_text: bool = True
+    channel_offline_reply: str = (
+        "Claude Code channel is not connected. Start the existing Claude Code session "
+        "with the QQ channel plugin enabled."
+    )
 
     model_config = {
         "env_prefix": "QQ_BRIDGE_",
@@ -24,15 +42,30 @@ class Settings(BaseSettings):
 
     @property
     def db_full_path(self) -> Path:
-        p = Path(self.db_path)
-        if not p.is_absolute():
-            p = PROJECT_ROOT / p
-        p.parent.mkdir(parents=True, exist_ok=True)
-        return p
+        path = Path(self.db_path)
+        if not path.is_absolute():
+            path = PROJECT_ROOT / path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def log_full_path(self) -> Path:
+        path = Path(self.log_path)
+        if not path.is_absolute():
+            path = PROJECT_ROOT / path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def allowed_user_ids(self) -> set[str]:
+        return _split_csv(self.allowed_users)
+
+    @property
+    def allowed_group_ids(self) -> set[str]:
+        return _split_csv(self.allowed_groups)
 
     def validate(self) -> list[str]:
-        """验证必要配置项，返回缺失项列表"""
-        missing = []
+        missing: list[str] = []
         if not self.bot_app_id:
             missing.append("QQ_BRIDGE_BOT_APP_ID")
         if not self.bot_app_secret:
@@ -40,11 +73,6 @@ class Settings(BaseSettings):
         return missing
 
 
-_settings: Settings | None = None
-
-
+@lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    global _settings
-    if _settings is None:
-        _settings = Settings()
-    return _settings
+    return Settings()

@@ -1,0 +1,9 @@
+{
+  "name": "qq",
+  "description": "QQ channel for Claude Code. Routes QQ private or group-at messages into the active Claude Code session and replies through QQ.",
+  "version": "0.2.0",
+  "author": {
+    "name": "Local"
+  },
+  "keywords": ["qq", "messaging", "channel", "mcp"]
+}

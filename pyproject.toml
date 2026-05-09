@@ -1,18 +1,20 @@
 [build-system]
 requires = ["setuptools>=68.0"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "qq-bridge"
-version = "0.1.0"
-description = "QQ Bot Bridge MCP Server"
+version = "0.2.0"
+description = "QQ channel bridge for an active Claude Code session"
 requires-python = ">=3.10"
 dependencies = [
     "qq-botpy>=1.2.0",
     "mcp>=1.0.0",
     "pydantic-settings>=2.0.0",
-    "aiosqlite>=0.19.0",
 ]
+
+[project.scripts]
+qq-bridge = "qq_bridge.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["qq_bridge*"]

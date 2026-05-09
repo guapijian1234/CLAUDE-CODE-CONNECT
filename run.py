@@ -1,23 +1,11 @@
-"""启动 QQ Bridge — 最少依赖"""
-import sys, time
-sys.path.insert(0, ".")
-from qq_bridge.config import get_settings
-from qq_bridge import storage
-from qq_bridge.qq_bot import start_bot, get_status
+"""Run the QQ channel MCP server.
 
-settings = get_settings()
-if settings.validate():
-    print("Missing config:", settings.validate())
-    sys.exit(1)
+Claude Code normally starts this process through the plugin or .mcp.json.
+Running it directly is useful only for MCP/stdin debugging.
+"""
 
-storage.init_db()
-print("DB ready")
-start_bot()
-time.sleep(5)
-print("Bot:", get_status())
+from qq_bridge.server import serve
 
-try:
-    while True:
-        time.sleep(30)
-except KeyboardInterrupt:
-    print("Done")
+
+if __name__ == "__main__":
+    serve()

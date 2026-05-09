@@ -1,18 +1,24 @@
-"""SQLite 消息存储 — 线程安全的数据库操作"""
+"""Small SQLite persistence layer used by the bridge."""
+
+from __future__ import annotations
 
 import sqlite3
 import threading
 from datetime import datetime
+from typing import Any
+
 from .config import get_settings
 
 _local = threading.local()
 
 
+def utc_now() -> str:
+    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
 def _get_conn() -> sqlite3.Connection:
-    """获取当前线程的数据库连接（线程本地存储）"""
     if not hasattr(_local, "conn") or _local.conn is None:
-        db_path = str(get_settings().db_full_path)
-        conn = sqlite3.connect(db_path, check_same_thread=False)
+        conn = sqlite3.connect(str(get_settings().db_full_path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=5000")
@@ -20,10 +26,27 @@ def _get_conn() -> sqlite3.Connection:
     return _local.conn
 
 
-def init_db():
-    """初始化数据库表"""
+def close() -> None:
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        conn.close()
+        _local.conn = None
+
+
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(row["name"] == column for row in rows)
+
+
+def _add_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    if not _has_column(conn, table, column):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
+def init_db() -> None:
     conn = _get_conn()
-    conn.executescript("""
+    conn.executescript(
+        """
         CREATE TABLE IF NOT EXISTS messages (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             message_id      TEXT    NOT NULL,
@@ -46,6 +69,7 @@ def init_db():
             chat_type       TEXT    NOT NULL,
             target_id       TEXT    NOT NULL,
             content         TEXT    NOT NULL,
+            message_format  TEXT    NOT NULL DEFAULT 'text',
             reply_msg_id    TEXT,
             status          TEXT    NOT NULL DEFAULT 'pending',
             created_at      TEXT    NOT NULL,
@@ -57,134 +81,179 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_msg_status ON messages(status);
         CREATE INDEX IF NOT EXISTS idx_msg_created ON messages(created_at);
         CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox(status);
-    """)
+        """
+    )
+    _add_column(conn, "messages", "chat_id", "TEXT")
+    _add_column(conn, "messages", "error_info", "TEXT")
+    _add_column(conn, "outbox", "source_message_id", "INTEGER")
+    _add_column(conn, "outbox", "remote_message_id", "TEXT")
+    _add_column(conn, "outbox", "message_format", "TEXT NOT NULL DEFAULT 'text'")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_msg_chat ON messages(chat_id)")
     conn.commit()
 
 
-def insert_message(*, message_id: str, content: str, raw_content: str | None,
-                   author_id: str, author_name: str | None, chat_type: str,
-                   group_openid: str | None = None, guild_id: str | None = None,
-                   channel_id: str | None = None) -> int:
-    """插入收到的 QQ 消息，返回内部 id"""
+def insert_message(
+    *,
+    message_id: str,
+    content: str,
+    raw_content: str | None,
+    author_id: str,
+    author_name: str | None,
+    chat_type: str,
+    chat_id: str,
+    group_openid: str | None = None,
+    guild_id: str | None = None,
+    channel_id: str | None = None,
+) -> int:
     conn = _get_conn()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cur = conn.execute(
-        """INSERT INTO messages (message_id, content, raw_content, author_id, author_name,
-           chat_type, group_openid, guild_id, channel_id, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (message_id, content, raw_content, author_id, author_name,
-         chat_type, group_openid, guild_id, channel_id, now)
+        """
+        INSERT INTO messages (
+            message_id, content, raw_content, author_id, author_name,
+            chat_type, chat_id, group_openid, guild_id, channel_id, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            message_id,
+            content,
+            raw_content,
+            author_id,
+            author_name,
+            chat_type,
+            chat_id,
+            group_openid,
+            guild_id,
+            channel_id,
+            utc_now(),
+        ),
     )
     conn.commit()
-    return cur.lastrowid
+    return int(cur.lastrowid)
 
 
-def get_pending_messages(limit: int = 5):
-    """获取待处理的消息列表"""
-    conn = _get_conn()
-    rows = conn.execute(
-        "SELECT * FROM messages WHERE status='pending' ORDER BY created_at ASC LIMIT ?",
-        (limit,)
-    ).fetchall()
-    return [dict(r) for r in rows]
-
-
-def get_message_by_id(msg_id: int):
+def get_message_by_id(msg_id: int) -> dict[str, Any] | None:
     conn = _get_conn()
     row = conn.execute("SELECT * FROM messages WHERE id=?", (msg_id,)).fetchone()
     return dict(row) if row else None
 
 
-def update_message_status(msg_id: int, status: str, reply_content: str | None = None):
-    """更新消息状态，可选附带回复内容"""
+def get_pending_messages(limit: int = 5) -> list[dict[str, Any]]:
     conn = _get_conn()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    if reply_content is not None:
-        conn.execute(
-            "UPDATE messages SET status=?, processed_at=?, reply_content=? WHERE id=?",
-            (status, now, reply_content, msg_id)
-        )
-    else:
-        conn.execute(
-            "UPDATE messages SET status=?, processed_at=? WHERE id=?",
-            (status, now, msg_id)
-        )
-    conn.commit()
+    rows = conn.execute(
+        "SELECT * FROM messages WHERE status='pending' ORDER BY created_at ASC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
-def count_by_status(status: str) -> int:
+def update_message_status(
+    msg_id: int,
+    status: str,
+    reply_content: str | None = None,
+    error_info: str | None = None,
+) -> None:
     conn = _get_conn()
-    row = conn.execute(
-        "SELECT COUNT(*) as cnt FROM messages WHERE status=?", (status,)
-    ).fetchone()
-    return row["cnt"]
-
-
-def insert_outbox(*, chat_type: str, target_id: str, content: str,
-                  reply_msg_id: str | None = None) -> int:
-    """向发件箱插入待发送消息"""
-    conn = _get_conn()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cur = conn.execute(
-        "INSERT INTO outbox (chat_type, target_id, content, reply_msg_id, created_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (chat_type, target_id, content, reply_msg_id, now)
+    conn.execute(
+        """
+        UPDATE messages
+        SET status=?, processed_at=?, reply_content=COALESCE(?, reply_content),
+            error_info=COALESCE(?, error_info)
+        WHERE id=?
+        """,
+        (status, utc_now(), reply_content, error_info, msg_id),
     )
     conn.commit()
-    return cur.lastrowid
 
 
-def get_pending_outbox(limit: int = 5):
+def insert_outbox(
+    *,
+    chat_type: str,
+    target_id: str,
+    content: str,
+    message_format: str = "text",
+    reply_msg_id: str | None = None,
+    source_message_id: int | None = None,
+) -> int:
+    conn = _get_conn()
+    cur = conn.execute(
+        """
+        INSERT INTO outbox (
+            chat_type, target_id, content, message_format, reply_msg_id, source_message_id, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (chat_type, target_id, content, message_format, reply_msg_id, source_message_id, utc_now()),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def get_pending_outbox(limit: int = 10) -> list[dict[str, Any]]:
     conn = _get_conn()
     rows = conn.execute(
         "SELECT * FROM outbox WHERE status='pending' ORDER BY created_at ASC LIMIT ?",
-        (limit,)
+        (limit,),
     ).fetchall()
-    return [dict(r) for r in rows]
+    return [dict(row) for row in rows]
 
 
-def mark_outbox_sending(outbox_id: int):
-    """标记发件箱消息为发送中，防止重复发送"""
+def mark_outbox_sending(outbox_id: int) -> bool:
     conn = _get_conn()
-    conn.execute(
+    cur = conn.execute(
         "UPDATE outbox SET status='sending' WHERE id=? AND status='pending'",
-        (outbox_id,)
+        (outbox_id,),
     )
     conn.commit()
+    return cur.rowcount == 1
 
 
-def mark_outbox_sent(outbox_id: int):
-    conn = _get_conn()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn.execute(
-        "UPDATE outbox SET status='sent', sent_at=? WHERE id=?", (now, outbox_id)
-    )
-    conn.commit()
-
-
-def mark_outbox_failed(outbox_id: int, error: str):
+def mark_outbox_sent(outbox_id: int, remote_message_id: str | None = None) -> None:
     conn = _get_conn()
     conn.execute(
-        "UPDATE outbox SET status='failed', error_info=?, retry_count=retry_count+1 "
-        "WHERE id=?", (error, outbox_id)
+        "UPDATE outbox SET status='sent', sent_at=?, remote_message_id=? WHERE id=?",
+        (utc_now(), remote_message_id, outbox_id),
     )
     conn.commit()
 
 
-def get_stats() -> dict:
-    """获取统计信息"""
+def mark_outbox_failed(outbox_id: int, error: str) -> None:
     conn = _get_conn()
-    pending = conn.execute(
-        "SELECT COUNT(*) as cnt FROM messages WHERE status='pending'"
-    ).fetchone()["cnt"]
-    outbox_pending = conn.execute(
-        "SELECT COUNT(*) as cnt FROM outbox WHERE status='pending'"
-    ).fetchone()["cnt"]
-    total_msg = conn.execute(
-        "SELECT COUNT(*) as cnt FROM messages"
-    ).fetchone()["cnt"]
+    conn.execute(
+        """
+        UPDATE outbox
+        SET status='failed', error_info=?, retry_count=retry_count+1
+        WHERE id=?
+        """,
+        (error[:1000], outbox_id),
+    )
+    conn.commit()
+
+
+def reset_outbox_to_pending(outbox_id: int, error: str | None = None) -> None:
+    conn = _get_conn()
+    conn.execute(
+        """
+        UPDATE outbox
+        SET status='pending', error_info=COALESCE(?, error_info)
+        WHERE id=?
+        """,
+        (error[:1000] if error else None, outbox_id),
+    )
+    conn.commit()
+
+
+def get_stats() -> dict[str, int]:
+    conn = _get_conn()
+
+    def count(query: str) -> int:
+        return int(conn.execute(query).fetchone()["cnt"])
+
     return {
-        "pending_messages": pending,
-        "pending_outbox": outbox_pending,
-        "total_messages": total_msg,
+        "pending_messages": count("SELECT COUNT(*) AS cnt FROM messages WHERE status='pending'"),
+        "delivered_messages": count("SELECT COUNT(*) AS cnt FROM messages WHERE status='delivered'"),
+        "failed_messages": count("SELECT COUNT(*) AS cnt FROM messages WHERE status='failed'"),
+        "pending_outbox": count("SELECT COUNT(*) AS cnt FROM outbox WHERE status='pending'"),
+        "failed_outbox": count("SELECT COUNT(*) AS cnt FROM outbox WHERE status='failed'"),
+        "total_messages": count("SELECT COUNT(*) AS cnt FROM messages"),
     }
