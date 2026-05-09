@@ -23,5 +23,7 @@ while True:
             gid = m.get('group_openid') or ''
             # Output format: NEW|id|chat_type|group_openid|author_id|content
             content = m['content'].replace('\n', '\\n').replace('|', '\\|')
-            print(f"NEW|{m['id']}|{ct}|{gid}|{m['author_id']}|{content}", flush=True)
+            # Avoid UnicodeEncodeError on Windows GBK console
+            safe = content.encode('ascii', errors='replace').decode('ascii')
+            print(f"NEW|{m['id']}|{ct}|{gid}|{m['author_id']}|{safe}", flush=True)
     time.sleep(2)
