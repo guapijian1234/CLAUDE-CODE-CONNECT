@@ -96,8 +96,6 @@ class QQBotClient(botpy.Client):
             url = f"{API_BASE}/v2/users/{item['target_id']}/messages"
 
         payload = {"content": item['content'], "msg_type": 0}
-        if item.get('reply_msg_id'):
-            payload['msg_id'] = item['reply_msg_id']
 
         try:
             async with aiohttp.ClientSession() as session:
