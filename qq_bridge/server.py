@@ -3,7 +3,7 @@
 from mcp.server.fastmcp import FastMCP
 from . import storage
 from .config import get_settings
-from .qq_bot import get_bot_status
+from .qq_bot import start_bot_thread, get_bot_status
 
 mcp = FastMCP("qq-bridge")
 
@@ -119,6 +119,7 @@ def serve():
         return
 
     storage.init_db()
+    start_bot_thread()
     mcp.run(transport="stdio")
 
 
