@@ -120,7 +120,6 @@ def serve():
         return
 
     storage.init_db()
-    start_bot_thread()
     mcp.run(transport="stdio")
 
 
