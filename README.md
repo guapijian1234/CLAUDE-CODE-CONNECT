@@ -225,6 +225,15 @@ logs/qq_bridge.log
 
 VS Code 扩展可能直接调用自己的 Claude Code 二进制，不一定经过本项目安装的 `claude.cmd` 包装器。建议用独立 CMD 或 PowerShell 启动 `claude`。
 
+## 支持作者
+
+如果这个项目帮到了你，可以请作者喝杯咖啡。感谢支持。
+
+<p>
+  <img src="微信收款码.png" alt="微信收款码" width="240" />
+  <img src="支付宝收款码.jpg" alt="支付宝收款码" width="240" />
+</p>
+
 ## 开源前注意
 
 不要提交这些本机私有文件：
