@@ -20,7 +20,7 @@ _access_token: str | None = None
 
 
 class QQBotClient(botpy.Client):
-    """QQ 机器人 — 只负责收发，AI 处理由 Claude Code 通过 MCP 完成"""
+    """QQ 机器人 — 只负责收发"""
 
     async def on_ready(self):
         global _access_token
@@ -30,6 +30,8 @@ class QQBotClient(botpy.Client):
 
     def _capture_token(self):
         global _access_token
+        if _access_token:
+            return
         try:
             http = getattr(self, 'http', None)
             if http:
@@ -75,6 +77,8 @@ class QQBotClient(botpy.Client):
             try:
                 items = storage.get_pending_outbox(limit=5)
                 for item in items:
+                    # Mark as sending FIRST to prevent duplicate sends
+                    storage.mark_outbox_sending(item['id'])
                     await self._send_item(item)
             except Exception as e:
                 logger.error("Outbox poll error: %s", e)
@@ -83,6 +87,8 @@ class QQBotClient(botpy.Client):
     async def _send_item(self, item: dict):
         token = _access_token
         if not token:
+            logger.error("No access token — cannot send outbox #%d", item['id'])
+            storage.mark_outbox_failed(item['id'], "No access token")
             return
 
         headers = {
@@ -95,31 +101,24 @@ class QQBotClient(botpy.Client):
         else:
             url = f"{API_BASE}/v2/users/{item['target_id']}/messages"
 
-        # Auto-detect markdown and use proper QQ markdown format
         is_md = any(marker in item['content'] for marker in ['#', '**', '```', '|', '- ', '> '])
         if is_md:
-            payload = {
-                "msg_type": 2,
-                "markdown": {"content": item['content']},
-            }
+            payload = {"msg_type": 2, "markdown": {"content": item['content']}}
         else:
-            payload = {
-                "content": item['content'],
-                "msg_type": 0,
-            }
+            payload = {"content": item['content'], "msg_type": 0}
 
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, headers=headers, json=payload) as resp:
                     body = await resp.text()
                     if resp.status != 200:
-                        logger.error("Send failed %d: %s", resp.status, body[:200])
+                        logger.error("Send #%d failed %d: %s", item['id'], resp.status, body[:200])
                         storage.mark_outbox_failed(item['id'], f"HTTP {resp.status}: {body[:200]}")
                     else:
                         storage.mark_outbox_sent(item['id'])
                         logger.info("Sent #%d OK (%d chars)", item['id'], len(item['content']))
         except Exception as e:
-            logger.error("Send error: %s", e)
+            logger.error("Send #%d error: %s", item['id'], e)
             storage.mark_outbox_failed(item['id'], str(e))
 
     def _strip_mentions(self, message: GroupMessage) -> str:

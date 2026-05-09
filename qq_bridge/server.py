@@ -1,10 +1,9 @@
 """MCP 服务器 — 提供 QQ 消息检查、发送等工具给本地 AI 助手调用"""
 
-import json
 from mcp.server.fastmcp import FastMCP
 from . import storage
 from .config import get_settings
-from .qq_bot import start_bot_thread, get_bot_status
+from .qq_bot import get_bot_status
 
 mcp = FastMCP("qq-bridge")
 

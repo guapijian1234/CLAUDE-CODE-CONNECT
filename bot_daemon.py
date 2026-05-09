@@ -1,5 +1,6 @@
-"""QQ Bot 独立守护进程 — 不依赖 MCP，单独运行"""
+"""QQ Bot 守护进程"""
 import os
+import subprocess
 import sys
 import time
 import logging
@@ -15,7 +16,6 @@ PID_FILE.parent.mkdir(parents=True, exist_ok=True)
 if PID_FILE.exists():
     old_pid = PID_FILE.read_text().strip()
     try:
-        import subprocess
         subprocess.run(["taskkill", "/F", "/PID", old_pid], capture_output=True)
     except Exception:
         pass
@@ -77,3 +77,8 @@ try:
         )
 except KeyboardInterrupt:
     logger.info("Bot stopped by user")
+finally:
+    try:
+        PID_FILE.unlink(missing_ok=True)
+    except Exception:
+        pass

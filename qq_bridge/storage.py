@@ -143,6 +143,16 @@ def get_pending_outbox(limit: int = 5):
     return [dict(r) for r in rows]
 
 
+def mark_outbox_sending(outbox_id: int):
+    """标记发件箱消息为发送中，防止重复发送"""
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE outbox SET status='sending' WHERE id=? AND status='pending'",
+        (outbox_id,)
+    )
+    conn.commit()
+
+
 def mark_outbox_sent(outbox_id: int):
     conn = _get_conn()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

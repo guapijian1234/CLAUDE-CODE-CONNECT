@@ -1,0 +1,19 @@
+我在cli中发现 每隔一段时间就会输出 
+● 无。
+
+✻ Sautéed for 8s · 1 shell, 1 monitor still running
+
+✻ Running scheduled task (May 10 12:50am)
+
+● 0。
+
+✻ Cooked for 1s · 1 shell, 1 monitor still running
+
+● Monitor event: "QQ real-time message watcher"
+
+● Bash(python -c "
+      import sqlite3; conn=sqlite3.connect('data/bridge.db')…)
+  ⎿  (No output)
+
+  Read 1 file (ctrl+o to expand)
+这种 让他静默 不要消耗我的token
