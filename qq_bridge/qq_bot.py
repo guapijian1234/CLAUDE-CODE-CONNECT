@@ -1,4 +1,4 @@
-"""QQ Bot WebSocket 客户端 — 收到消息立即调 AI 实时回复"""
+"""QQ Bot WebSocket 客户端 — 接收消息存 DB，轮询发件箱发送回复"""
 
 import asyncio
 import logging
@@ -10,7 +10,6 @@ from botpy.message import GroupMessage, C2CMessage
 
 from .config import get_settings
 from . import storage
-from . import ai_client
 
 logger = logging.getLogger("qq_bridge.bot")
 
@@ -21,12 +20,13 @@ _access_token: str | None = None
 
 
 class QQBotClient(botpy.Client):
-    """QQ 机器人客户端，收到消息立即调 AI 并回复"""
+    """QQ 机器人 — 只负责收发，AI 处理由 Claude Code 通过 MCP 完成"""
 
     async def on_ready(self):
         global _access_token
         self._capture_token()
         logger.info("Bot ready, token=%s", "OK" if _access_token else "MISSING")
+        asyncio.create_task(self._poll_outbox())
 
     def _capture_token(self):
         global _access_token
@@ -44,58 +44,45 @@ class QQBotClient(botpy.Client):
         if not content:
             return
         logger.info("Group@ msg: %s", content[:50])
-        await self._handle_message(
-            msg_id=message.id,
+        storage.insert_message(
+            message_id=message.id,
             content=content,
+            raw_content=getattr(message, 'content', '') or '',
+            author_id=message.author.member_openid,
+            author_name=None,
             chat_type='group',
-            target_id=message.group_openid,
+            group_openid=message.group_openid,
         )
 
     async def on_c2c_message_create(self, message: C2CMessage):
+        self._capture_token()
         content = getattr(message, 'content', '') or ''
         if not content.strip():
             return
         logger.info("C2C msg: %s", content[:50])
-        self._capture_token()
-        await self._handle_message(
-            msg_id=message.id,
-            content=content.strip(),
-            chat_type='c2c',
-            target_id=message.author.user_openid,
-        )
-
-    async def _handle_message(self, *, msg_id: str, content: str,
-                              chat_type: str, target_id: str):
-        """收到消息 → 调 AI → 立即回复"""
-        # Store the message
         storage.insert_message(
-            message_id=msg_id,
-            content=content,
+            message_id=message.id,
+            content=content.strip(),
             raw_content=content,
-            author_id=target_id,
+            author_id=message.author.user_openid,
             author_name=None,
-            chat_type=chat_type,
+            chat_type='c2c',
         )
 
-        # Call AI API for real-time response
-        logger.info("Calling AI for: %s", content[:80])
-        reply = await ai_client.chat(content)
-        logger.info("AI reply: %s", reply[:80])
+    async def _poll_outbox(self):
+        logger.info("Outbox poller started")
+        while True:
+            try:
+                items = storage.get_pending_outbox(limit=5)
+                for item in items:
+                    await self._send_item(item)
+            except Exception as e:
+                logger.error("Outbox poll error: %s", e)
+            await asyncio.sleep(1)
 
-        if not reply or reply.startswith("[AI"):
-            logger.error("AI returned error: %s", reply)
-            return
-
-        # Send reply to QQ immediately
-        await self._send_reply(chat_type=chat_type, target_id=target_id,
-                               content=reply, reply_msg_id=msg_id)
-
-    async def _send_reply(self, *, chat_type: str, target_id: str,
-                          content: str, reply_msg_id: str):
-        """直接通过 HTTP API 发送 QQ 消息"""
+    async def _send_item(self, item: dict):
         token = _access_token
         if not token:
-            logger.error("No access token, cannot send")
             return
 
         headers = {
@@ -103,25 +90,28 @@ class QQBotClient(botpy.Client):
             "Content-Type": "application/json",
         }
 
-        if chat_type == 'group':
-            url = f"{API_BASE}/v2/groups/{target_id}/messages"
+        if item['chat_type'] == 'group':
+            url = f"{API_BASE}/v2/groups/{item['target_id']}/messages"
         else:
-            url = f"{API_BASE}/v2/users/{target_id}/messages"
+            url = f"{API_BASE}/v2/users/{item['target_id']}/messages"
 
-        payload = {"content": content, "msg_type": 0}
-        if reply_msg_id:
-            payload["msg_id"] = reply_msg_id
+        payload = {"content": item['content'], "msg_type": 0}
+        if item.get('reply_msg_id'):
+            payload['msg_id'] = item['reply_msg_id']
 
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, headers=headers, json=payload) as resp:
                     body = await resp.text()
                     if resp.status != 200:
-                        logger.error("QQ send failed %d: %s", resp.status, body[:200])
+                        logger.error("Send failed %d: %s", resp.status, body[:200])
+                        storage.mark_outbox_failed(item['id'], f"HTTP {resp.status}: {body[:200]}")
                     else:
-                        logger.info("QQ reply sent OK (%d chars)", len(content))
+                        storage.mark_outbox_sent(item['id'])
+                        logger.info("Sent #%d OK (%d chars)", item['id'], len(item['content']))
         except Exception as e:
-            logger.error("QQ send error: %s", e)
+            logger.error("Send error: %s", e)
+            storage.mark_outbox_failed(item['id'], str(e))
 
     def _strip_mentions(self, message: GroupMessage) -> str:
         content = getattr(message, 'content', '') or ''
@@ -142,13 +132,13 @@ def _run_bot():
     settings = get_settings()
     logger.info("Starting QQ Bot app_id=%s...",
                 settings.bot_app_id[:6] + "..." if settings.bot_app_id else "(empty)")
-    logger.info("AI API: %s model=%s", ai_client.API_BASE, ai_client.MODEL)
     try:
         intents = botpy.Intents(public_messages=True)
-        client = QQBotClient(intents=intents, timeout=30)
         _bot_running = True
         loop.run_until_complete(
-            client.start(appid=settings.bot_app_id, secret=settings.bot_app_secret)
+            QQBotClient(intents=intents, timeout=30).start(
+                appid=settings.bot_app_id, secret=settings.bot_app_secret
+            )
         )
     except Exception as e:
         _bot_error = str(e)
