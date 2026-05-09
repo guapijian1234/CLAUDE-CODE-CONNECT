@@ -1,9 +1,19 @@
-Start the QQ Bridge Monitor to listen for incoming QQ messages in real-time.
+Start the QQ Bridge system.
 
-Do these steps:
-1. Start the QQ Bot daemon if not running: `python bot_daemon.py` (run in background)
-2. Start the Monitor: Monitor(command="python watch_qq.py", persistent=true, description="QQ watcher")
-3. Check for any pending QQ messages and process them
-4. Report: "QQ Bridge 已启动 — Bot + Monitor 运行中"
+Do these steps using PowerShell (not Bash):
 
-When QQ messages arrive, process them immediately and send replies via outbox.
+1. Start Bot daemon as independent process:
+   ```
+   Remove-Item "data/bot.pid" -Force -ErrorAction SilentlyContinue
+   Start-Process python -ArgumentList "bot_daemon.py" -WorkingDirectory "$PWD" -WindowStyle Hidden
+   ```
+
+2. Wait 6 seconds then check bot connected:
+   Check logs/bot.log for "Bot ready, token=OK"
+
+3. Start Monitor:
+   Monitor(command="python watch_qq.py", persistent=true, description="QQ watcher")
+
+4. Check for pending QQ messages and process them.
+
+5. Report: "QQ Bridge 已启动 — Bot + Monitor 运行中"
