@@ -18,16 +18,27 @@ API_BASE = "https://api.sgroup.qq.com"
 _bot_running = False
 _bot_error: str | None = None
 _access_token: str | None = None
+_poller_started = False
 
 
 class QQBotClient(botpy.Client):
     """QQ 机器人客户端，在后台线程中运行"""
 
     async def on_ready(self):
-        global _access_token
-        _access_token = self.access_token
-        logger.info("QQ Bot connected and ready")
-        asyncio.create_task(self._poll_outbox())
+        global _access_token, _poller_started
+        try:
+            # botpy stores token in http._token.access_token
+            http = getattr(self, 'http', None)
+            if http:
+                tok = getattr(http, '_token', None)
+                if tok:
+                    _access_token = getattr(tok, 'access_token', None)
+            logger.info("QQ Bot connected and ready, token=%s", "OK" if _access_token else "MISSING")
+        except Exception as e:
+            logger.error("Failed to get access_token in on_ready: %s", e)
+        if not _poller_started:
+            _poller_started = True
+            asyncio.create_task(self._poll_outbox())
 
     async def on_group_at_message_create(self, message: GroupMessage):
         content = self._strip_mentions(message)
@@ -48,6 +59,22 @@ class QQBotClient(botpy.Client):
         )
 
     async def on_c2c_message_create(self, message: C2CMessage):
+        global _access_token, _poller_started
+        if not _access_token:
+            try:
+                http = getattr(self, 'http', None)
+                if http:
+                    tok = getattr(http, '_token', None)
+                    if tok:
+                        _access_token = getattr(tok, 'access_token', None)
+                if _access_token:
+                    logger.info("Captured access_token from message handler")
+            except Exception as e:
+                logger.error("Token capture failed: %s", e)
+        if not _poller_started:
+            _poller_started = True
+            logger.info("Starting outbox poller from message handler (fallback)")
+            asyncio.create_task(self._poll_outbox())
         content = getattr(message, 'content', '') or ''
         if not content.strip():
             return
