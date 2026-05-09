@@ -3,15 +3,27 @@ import asyncio
 import logging
 import threading
 import time
+from pathlib import Path
 
 import aiohttp
 import botpy
 from botpy.message import GroupMessage, C2CMessage
 
-from .config import get_settings
+from .config import get_settings, PROJECT_ROOT
 from . import storage
 
 logger = logging.getLogger("qq_bridge.bot")
+
+# Ensure logging is configured
+if not logger.handlers and not logging.getLogger().handlers:
+    log_file = PROJECT_ROOT / "logs" / "bot.log"
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+        handlers=[logging.FileHandler(log_file, encoding="utf-8")],
+    )
+
 API_BASE = "https://api.sgroup.qq.com"
 
 _state = {"running": False, "error": None, "token": None}
