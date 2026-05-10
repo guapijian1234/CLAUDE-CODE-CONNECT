@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     progress_batch_max_items: int = Field(default=8, ge=1, le=50)
     progress_reply_to_source: bool = False
     progress_include_assistant_text: bool = True
-    progress_transcript_tail_bytes: int = Field(default=4_000_000, ge=0, le=50_000_000)
+    progress_transcript_tail_bytes: int = Field(default=1_000_000, ge=0, le=50_000_000)
     channel_offline_reply: str = (
         "Claude Code channel is not connected. Start the existing Claude Code session "
         "with the QQ channel plugin enabled."
