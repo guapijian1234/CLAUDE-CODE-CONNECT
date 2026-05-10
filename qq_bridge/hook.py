@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +36,8 @@ SENSITIVE_RE = re.compile(
     r"(?i)(sk-[A-Za-z0-9_-]{8,}|"
     r"(api[_-]?key|token|secret|password|authorization)\s*[:=]\s*[^\s\"']+)"
 )
+TRANSCRIPT_OFFSET_PREFIX = "transcript_offset:"
+ASSISTANT_LINE_PREFIX = "\u25cf "
 
 
 def main() -> None:
@@ -65,13 +69,13 @@ def handle_event(payload: dict[str, Any]) -> None:
     if not active:
         return
 
+    texts = transcript_progress_events(payload, active, settings)
     text = format_event(payload, settings)
-    if not text:
-        if event in {"Stop", "StopFailure"}:
-            storage.clear_active_chat()
-        return
+    if text:
+        texts.append(text)
 
-    enqueue_progress(active, text, settings)
+    for item in _unique_texts(texts):
+        enqueue_progress(active, item, settings)
     if event in {"Stop", "StopFailure"}:
         storage.clear_active_chat()
 
@@ -123,6 +127,168 @@ def format_event(payload: dict[str, Any], settings: Settings) -> str | None:
     if event in {"Stop", "StopFailure"}:
         return None
     return None
+
+
+def transcript_progress_events(
+    payload: dict[str, Any],
+    active: dict[str, Any],
+    settings: Settings,
+) -> list[str]:
+    if not settings.progress_include_assistant_text:
+        return []
+
+    path_value = payload.get("transcript_path")
+    if not path_value:
+        return []
+
+    path = Path(str(path_value)).expanduser()
+    if not path.is_file():
+        return []
+
+    state_key = _transcript_state_key(path)
+    offset = _parse_offset(storage.get_state(state_key))
+    lines, new_offset = _read_transcript_lines(
+        path,
+        offset=offset,
+        tail_bytes=settings.progress_transcript_tail_bytes,
+    )
+    storage.set_state(state_key, str(new_offset))
+    if not lines:
+        return []
+
+    started_at = _active_started_at(active)
+    texts: list[str] = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if started_at is not None:
+            timestamp = _entry_timestamp(entry)
+            if timestamp is not None and timestamp < started_at - 15:
+                continue
+        for text in _assistant_visible_texts(entry):
+            formatted = _format_assistant_line(text, settings)
+            if formatted:
+                texts.append(formatted)
+    return _unique_texts(texts)
+
+
+def _read_transcript_lines(path: Path, *, offset: int | None, tail_bytes: int) -> tuple[list[str], int]:
+    size = path.stat().st_size
+    if offset is None or offset < 0 or offset > size:
+        start = max(0, size - tail_bytes) if tail_bytes > 0 else 0
+        discard_partial_head = start > 0
+    else:
+        start = offset
+        discard_partial_head = False
+
+    with path.open("rb") as fh:
+        fh.seek(start)
+        if discard_partial_head:
+            fh.readline()
+            start = fh.tell()
+        raw = fh.read()
+
+    if not raw:
+        return [], start
+
+    if raw.endswith(b"\n"):
+        complete = raw
+        new_offset = start + len(raw)
+    else:
+        last_newline = raw.rfind(b"\n")
+        if last_newline < 0:
+            return [], start
+        complete = raw[: last_newline + 1]
+        new_offset = start + last_newline + 1
+
+    text = complete.decode("utf-8", errors="replace")
+    return [line for line in text.splitlines() if line.strip()], new_offset
+
+
+def _assistant_visible_texts(entry: dict[str, Any]) -> list[str]:
+    message = entry.get("message")
+    if not isinstance(message, dict):
+        return []
+    if entry.get("type") != "assistant" and message.get("role") != "assistant":
+        return []
+
+    content = message.get("content")
+    if not isinstance(content, list):
+        return []
+
+    has_tool_use = any(
+        isinstance(block, dict) and block.get("type") == "tool_use"
+        for block in content
+    )
+    if message.get("stop_reason") != "tool_use" and not has_tool_use:
+        return []
+
+    texts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "text":
+            continue
+        text = _clean(str(block.get("text") or ""))
+        if text:
+            texts.append(text)
+    return texts
+
+
+def _format_assistant_line(text: str, settings: Settings) -> str | None:
+    lines = [_clean(line) for line in text.splitlines() if _clean(line)]
+    if not lines:
+        return None
+    first = lines[0]
+    rendered = ASSISTANT_LINE_PREFIX + first
+    if len(lines) > 1:
+        rendered += "\n" + "\n".join(f"  {line}" for line in lines[1:])
+    return _limit(rendered, settings)
+
+
+def _transcript_state_key(path: Path) -> str:
+    absolute = str(path.resolve(strict=False)).lower()
+    digest = hashlib.sha256(absolute.encode("utf-8", errors="ignore")).hexdigest()
+    return TRANSCRIPT_OFFSET_PREFIX + digest
+
+
+def _parse_offset(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _active_started_at(active: dict[str, Any]) -> float | None:
+    try:
+        value = float(active.get("started_at") or 0)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _entry_timestamp(entry: dict[str, Any]) -> float | None:
+    raw = entry.get("timestamp") or entry.get("created_at")
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _unique_texts(texts: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for text in texts:
+        cleaned = _clean(text)
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        unique.append(cleaned)
+    return unique
 
 
 def format_tool_call(payload: dict[str, Any]) -> str:

@@ -180,10 +180,11 @@ QQ_BRIDGE_MARKDOWN_ENABLED=false
 
 安装自动启动脚本后，项目会把一组 Claude Code hooks 写入用户级 `~/.claude/settings.json`。当 QQ 消息触发 Claude Code 执行时，bridge 会尽量按 Claude Code 内部工具输出的样子同步到当前 QQ 聊天。
 
-默认是 `normal` 模式：1.5 秒内的工具调用会合并成一条 QQ 消息，例如：
+默认是 `normal` 模式：1.5 秒内的 Claude Code 可见叙述和工具调用会合并成一条 QQ 消息，例如：
 
 ```text
 Claude Code
+● Now let me read the remaining handler files and key template files
 Read models/payment.go
 Read handlers/auth.go
 Grep "CreatePayment" handlers
@@ -199,7 +200,7 @@ QQ_BRIDGE_PROGRESS_LEVEL=normal   # 默认，批量合并工具行
 QQ_BRIDGE_PROGRESS_LEVEL=full     # 每个工具调用都单独发送
 ```
 
-不会发送“开始执行/完成执行”成对日志，也不会发送“本轮工具调用已完成，正在整理下一步”这类批处理提示。进度消息只包含工具名、文件路径、命令摘要等信息，不会发送完整工具输出，避免把日志、文件内容或密钥刷到 QQ。
+不会发送“开始执行/完成执行”成对日志，也不会发送“本轮工具调用已完成，正在整理下一步”这类批处理提示。bridge 会从 Claude Code transcript 中提取可见的 assistant 文本，所以 `● Now let me...` 这类终端里能看到的叙述也会同步到 QQ。隐藏推理块不会被转发；工具进度只包含工具名、文件路径、命令摘要等信息，不会发送完整工具输出，避免把日志、文件内容或密钥刷到 QQ。
 
 相关配置：
 
@@ -212,6 +213,8 @@ QQ_BRIDGE_PROGRESS_BATCH_DELAY_SECONDS=1.5
 QQ_BRIDGE_PROGRESS_BATCH_MAX_ITEMS=8
 QQ_BRIDGE_PROGRESS_ACTIVE_TTL_SECONDS=7200
 QQ_BRIDGE_PROGRESS_REPLY_TO_SOURCE=false
+QQ_BRIDGE_PROGRESS_INCLUDE_ASSISTANT_TEXT=true
+QQ_BRIDGE_PROGRESS_TRANSCRIPT_TAIL_BYTES=4000000
 ```
 
 ## 验证
