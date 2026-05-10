@@ -260,12 +260,16 @@ class QQBotService:
         reply_to: str | None = None,
         source_message_id: int | None = None,
         message_format: str | None = None,
+        force_progress_flush: bool = False,
     ) -> list[int]:
         chat_type, target_id = parse_chat_id(chat_id)
         if message_format is None:
             message_format = "markdown" if self.settings.markdown_enabled else "text"
         if message_format not in {"text", "markdown"}:
             raise ValueError("message_format must be text or markdown")
+
+        if force_progress_flush:
+            await self.flush_outbox_once(force_progress=True)
 
         outbox_ids: list[int] = []
         for index, chunk in enumerate(split_text(text, self.settings.message_chunk_size)):
@@ -282,10 +286,11 @@ class QQBotService:
         await self.flush_outbox_once()
         return outbox_ids
 
-    async def flush_outbox_once(self) -> None:
+    async def flush_outbox_once(self, *, force_progress: bool = False) -> None:
         if not self._ready.is_set() or not self.client:
             return
         async with self._send_lock:
+            self._flush_progress_to_outbox(force=force_progress)
             for item in storage.get_pending_outbox(limit=10):
                 if not storage.mark_outbox_sending(int(item["id"])):
                     continue
@@ -296,6 +301,48 @@ class QQBotService:
                     logger.exception("failed to send outbox #%s", item["id"])
                 else:
                     storage.mark_outbox_sent(int(item["id"]), remote_id)
+
+    def _flush_progress_to_outbox(self, *, force: bool = False) -> None:
+        if not self.settings.progress_enabled or self.settings.progress_mode in {"off", "full"}:
+            return
+
+        batch = storage.claim_progress_batch(
+            max_items=self.settings.progress_batch_max_items,
+            delay_seconds=0 if force else self.settings.progress_batch_delay_seconds,
+        )
+        if not batch:
+            return
+
+        ids = [int(item["id"]) for item in batch]
+        first = batch[0]
+        try:
+            content = self._format_progress_batch(batch)
+            if not content:
+                storage.mark_progress_batch_sent(ids)
+                return
+            message_format = "markdown" if self.settings.markdown_enabled else "text"
+            for index, chunk in enumerate(split_text(content, self.settings.message_chunk_size)):
+                storage.insert_outbox(
+                    chat_type=str(first["chat_type"]),
+                    target_id=str(first["target_id"]),
+                    content=chunk,
+                    message_format=message_format,
+                    reply_msg_id=first.get("reply_msg_id") if index == 0 else None,
+                    source_message_id=first.get("source_message_id"),
+                )
+        except Exception as exc:
+            storage.reset_progress_batch(ids, str(exc))
+            logger.exception("failed to batch progress events")
+        else:
+            storage.mark_progress_batch_sent(ids)
+
+    def _format_progress_batch(self, batch: list[dict[str, Any]]) -> str:
+        lines = [str(item["content"]).strip() for item in batch if str(item["content"]).strip()]
+        if not lines:
+            return ""
+        if len(lines) == 1:
+            return lines[0]
+        return "Claude Code\n" + "\n".join(lines)
 
     async def _send_item(self, item: dict[str, Any]) -> str | None:
         if not self.client:

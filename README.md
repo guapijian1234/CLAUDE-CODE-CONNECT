@@ -178,12 +178,26 @@ QQ_BRIDGE_MARKDOWN_ENABLED=false
 
 ## 进度回传
 
-安装自动启动脚本后，项目会把一组 Claude Code hooks 写入用户级 `~/.claude/settings.json`。当 QQ 消息触发 Claude Code 执行时，bridge 会尽量按 Claude Code 内部工具输出的样子同步到当前 QQ 聊天：
+安装自动启动脚本后，项目会把一组 Claude Code hooks 写入用户级 `~/.claude/settings.json`。当 QQ 消息触发 Claude Code 执行时，bridge 会尽量按 Claude Code 内部工具输出的样子同步到当前 QQ 聊天。
 
-- 工具调用出现时发送一次，例如 `Read C:\path\file.go`
-- 工具执行失败时发送一次失败摘要
-- 权限请求或权限拒绝时发送一次
-- 子任务创建或 Claude Code 通知会按简短单行同步
+默认是 `normal` 模式：1.5 秒内的工具调用会合并成一条 QQ 消息，例如：
+
+```text
+Claude Code
+Read models/payment.go
+Read handlers/auth.go
+Grep "CreatePayment" handlers
+Bash go test ./...
+```
+
+可选显示级别：
+
+```env
+QQ_BRIDGE_PROGRESS_LEVEL=off      # 不发进度
+QQ_BRIDGE_PROGRESS_LEVEL=compact  # 只发 Bash/Edit/Write/Task 等关键动作
+QQ_BRIDGE_PROGRESS_LEVEL=normal   # 默认，批量合并工具行
+QQ_BRIDGE_PROGRESS_LEVEL=full     # 每个工具调用都单独发送
+```
 
 不会发送“开始执行/完成执行”成对日志，也不会发送“本轮工具调用已完成，正在整理下一步”这类批处理提示。进度消息只包含工具名、文件路径、命令摘要等信息，不会发送完整工具输出，避免把日志、文件内容或密钥刷到 QQ。
 
@@ -191,8 +205,11 @@ QQ_BRIDGE_MARKDOWN_ENABLED=false
 
 ```env
 QQ_BRIDGE_PROGRESS_ENABLED=true
+QQ_BRIDGE_PROGRESS_LEVEL=normal
 QQ_BRIDGE_PROGRESS_ACK_ENABLED=true
 QQ_BRIDGE_PROGRESS_MAX_LENGTH=500
+QQ_BRIDGE_PROGRESS_BATCH_DELAY_SECONDS=1.5
+QQ_BRIDGE_PROGRESS_BATCH_MAX_ITEMS=8
 QQ_BRIDGE_PROGRESS_ACTIVE_TTL_SECONDS=7200
 QQ_BRIDGE_PROGRESS_REPLY_TO_SOURCE=false
 ```

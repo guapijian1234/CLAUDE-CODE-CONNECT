@@ -29,9 +29,12 @@ class Settings(BaseSettings):
     markdown_enabled: bool = True
     markdown_fallback_to_text: bool = True
     progress_enabled: bool = True
+    progress_level: str = "normal"
     progress_ack_enabled: bool = True
     progress_active_ttl_seconds: int = Field(default=7200, ge=60, le=86400)
     progress_max_length: int = Field(default=500, ge=120, le=2000)
+    progress_batch_delay_seconds: float = Field(default=1.5, ge=0.0, le=10.0)
+    progress_batch_max_items: int = Field(default=8, ge=1, le=50)
     progress_reply_to_source: bool = False
     channel_offline_reply: str = (
         "Claude Code channel is not connected. Start the existing Claude Code session "
@@ -68,6 +71,13 @@ class Settings(BaseSettings):
     @property
     def allowed_group_ids(self) -> set[str]:
         return _split_csv(self.allowed_groups)
+
+    @property
+    def progress_mode(self) -> str:
+        mode = (self.progress_level or "normal").strip().lower()
+        if mode not in {"off", "compact", "normal", "full"}:
+            return "normal"
+        return mode
 
     def validate(self) -> list[str]:
         missing: list[str] = []

@@ -99,7 +99,7 @@ def create_server(runtime: BridgeRuntime, publisher: ChannelPublisher) -> QQChan
             text = str(arguments["text"])
             reply_to = str(arguments.get("reply_to") or "") or None
             parse_chat_id(chat_id)
-            outbox_ids = await runtime.bot.send_text(chat_id, text, reply_to=reply_to)
+            outbox_ids = await runtime.bot.send_text(chat_id, text, reply_to=reply_to, force_progress_flush=True)
             return [types.TextContent(type="text", text=f"Queued QQ outbox messages: {outbox_ids}")]
 
         if name == "status":

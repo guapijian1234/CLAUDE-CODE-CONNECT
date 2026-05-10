@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
-from datetime import datetime
-import json
 import time
+from datetime import datetime
 from typing import Any
 
 from .config import get_settings
@@ -89,6 +89,21 @@ def init_db() -> None:
             value           TEXT NOT NULL,
             updated_at      TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS progress_events (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_type           TEXT    NOT NULL,
+            target_id           TEXT    NOT NULL,
+            content             TEXT    NOT NULL,
+            reply_msg_id        TEXT,
+            source_message_id   INTEGER,
+            status              TEXT    NOT NULL DEFAULT 'pending',
+            created_at          TEXT    NOT NULL,
+            created_ts          REAL    NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_progress_status_created
+            ON progress_events(status, created_ts);
         """
     )
     _add_column(conn, "messages", "chat_id", "TEXT")
@@ -160,6 +175,85 @@ def get_active_chat(max_age_seconds: int | None = None) -> dict[str, Any] | None
 
 def clear_active_chat() -> None:
     delete_state("active_chat")
+
+
+def insert_progress_event(
+    *,
+    chat_type: str,
+    target_id: str,
+    content: str,
+    reply_msg_id: str | None = None,
+    source_message_id: int | None = None,
+) -> int:
+    conn = _get_conn()
+    cur = conn.execute(
+        """
+        INSERT INTO progress_events (
+            chat_type, target_id, content, reply_msg_id,
+            source_message_id, status, created_at, created_ts
+        )
+        VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+        """,
+        (chat_type, target_id, content, reply_msg_id, source_message_id, utc_now(), time.time()),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def claim_progress_batch(max_items: int, delay_seconds: float) -> list[dict[str, Any]]:
+    conn = _get_conn()
+    rows = conn.execute(
+        """
+        SELECT * FROM progress_events
+        WHERE status='pending'
+        ORDER BY created_ts ASC
+        LIMIT 100
+        """
+    ).fetchall()
+    pending = [dict(row) for row in rows]
+    if not pending:
+        return []
+
+    first = pending[0]
+    same_chat = [
+        row
+        for row in pending
+        if row["chat_type"] == first["chat_type"]
+        and row["target_id"] == first["target_id"]
+        and (row.get("reply_msg_id") or "") == (first.get("reply_msg_id") or "")
+    ]
+    selected = same_chat[:max_items]
+    if len(selected) < max_items and time.time() - float(first["created_ts"]) < delay_seconds:
+        return []
+
+    claimed: list[dict[str, Any]] = []
+    for item in selected:
+        cur = conn.execute(
+            "UPDATE progress_events SET status='sending' WHERE id=? AND status='pending'",
+            (item["id"],),
+        )
+        if cur.rowcount == 1:
+            claimed.append(item)
+    conn.commit()
+    return claimed
+
+
+def mark_progress_batch_sent(ids: list[int]) -> None:
+    if not ids:
+        return
+    conn = _get_conn()
+    placeholders = ",".join("?" for _ in ids)
+    conn.execute(f"UPDATE progress_events SET status='sent' WHERE id IN ({placeholders})", ids)
+    conn.commit()
+
+
+def reset_progress_batch(ids: list[int], error: str | None = None) -> None:
+    if not ids:
+        return
+    conn = _get_conn()
+    placeholders = ",".join("?" for _ in ids)
+    conn.execute(f"UPDATE progress_events SET status='pending' WHERE id IN ({placeholders})", ids)
+    conn.commit()
 
 
 def insert_message(

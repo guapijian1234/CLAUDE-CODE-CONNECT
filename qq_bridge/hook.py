@@ -53,7 +53,11 @@ def main() -> None:
 
 def handle_event(payload: dict[str, Any]) -> None:
     settings = get_settings()
-    if not settings.progress_enabled:
+    event = str(payload.get("hook_event_name") or "")
+    if not settings.progress_enabled or settings.progress_mode == "off":
+        if event in {"Stop", "StopFailure"}:
+            storage.init_db()
+            storage.clear_active_chat()
         return
 
     storage.init_db()
@@ -63,12 +67,12 @@ def handle_event(payload: dict[str, Any]) -> None:
 
     text = format_event(payload, settings)
     if not text:
-        if payload.get("hook_event_name") in {"Stop", "StopFailure"}:
+        if event in {"Stop", "StopFailure"}:
             storage.clear_active_chat()
         return
 
     enqueue_progress(active, text, settings)
-    if payload.get("hook_event_name") in {"Stop", "StopFailure"}:
+    if event in {"Stop", "StopFailure"}:
         storage.clear_active_chat()
 
 
@@ -76,14 +80,20 @@ def enqueue_progress(active: dict[str, Any], text: str, settings: Settings) -> N
     chat_id = str(active.get("chat_id") or "")
     chat_type, target_id = parse_chat_id(chat_id)
     reply_msg_id = str(active.get("reply_msg_id") or "") if settings.progress_reply_to_source else None
-    storage.insert_outbox(
-        chat_type=chat_type,
-        target_id=target_id,
-        content=text,
-        message_format="markdown" if settings.markdown_enabled else "text",
-        reply_msg_id=reply_msg_id or None,
-        source_message_id=active.get("source_message_id"),
-    )
+    kwargs = {
+        "chat_type": chat_type,
+        "target_id": target_id,
+        "content": text,
+        "reply_msg_id": reply_msg_id or None,
+        "source_message_id": active.get("source_message_id"),
+    }
+    if settings.progress_mode == "full":
+        storage.insert_outbox(
+            **kwargs,
+            message_format="markdown" if settings.markdown_enabled else "text",
+        )
+    else:
+        storage.insert_progress_event(**kwargs)
 
 
 def format_event(payload: dict[str, Any], settings: Settings) -> str | None:
@@ -93,6 +103,8 @@ def format_event(payload: dict[str, Any], settings: Settings) -> str | None:
         return None
 
     if event == "PreToolUse":
+        if settings.progress_mode == "compact" and not _is_compact_tool(tool_name):
+            return None
         return _limit(format_tool_call(payload), settings)
     if event == "PostToolUseFailure":
         return _limit(f"{tool_name} failed\n{describe_tool(payload)}", settings)
@@ -119,6 +131,19 @@ def format_tool_call(payload: dict[str, Any]) -> str:
     return f"{tool_name} {detail}".strip()
 
 
+def _is_compact_tool(tool_name: str) -> bool:
+    return tool_name in {
+        "Bash",
+        "Write",
+        "Edit",
+        "MultiEdit",
+        "Task",
+        "Agent",
+        "WebFetch",
+        "WebSearch",
+    }
+
+
 def describe_tool(payload: dict[str, Any]) -> str:
     tool_name = str(payload.get("tool_name") or "")
     tool_input = payload.get("tool_input") or {}
@@ -128,15 +153,15 @@ def describe_tool(payload: dict[str, Any]) -> str:
     if tool_name == "Bash":
         command = _clean(str(tool_input.get("command") or ""))
         description = _clean(str(tool_input.get("description") or ""))
-        if description and command:
-            return f"{description}\n{command}"
-        return description or command
+        return command or description
     if tool_name in {"Read", "Write", "Edit", "MultiEdit"}:
         return _path_line(tool_input)
     if tool_name in {"Grep", "Glob"}:
         pattern = _clean(str(tool_input.get("pattern") or ""))
-        path = _clean(str(tool_input.get("path") or tool_input.get("glob") or ""))
-        return " ".join(part for part in [f"pattern=`{pattern}`" if pattern else "", f"path=`{path}`" if path else ""] if part)
+        path = _display_path(str(tool_input.get("path") or ""))
+        if tool_name == "Glob":
+            return pattern
+        return " ".join(part for part in [f'"{pattern}"' if pattern else "", path] if part)
     if tool_name in {"WebFetch", "WebSearch"}:
         target = tool_input.get("url") or tool_input.get("query") or ""
         return _clean(str(target))
@@ -154,7 +179,25 @@ def describe_tool(payload: dict[str, Any]) -> str:
 
 def _path_line(tool_input: dict[str, Any]) -> str:
     path = tool_input.get("file_path") or tool_input.get("path") or ""
-    return _clean(str(path)) if path else ""
+    return _display_path(str(path)) if path else ""
+
+
+def _display_path(path: str) -> str:
+    cleaned = _clean(path)
+    if not cleaned:
+        return ""
+    try:
+        absolute = os.path.abspath(os.path.normpath(cleaned))
+        for base in (os.getcwd(), str(Path.home())):
+            base_abs = os.path.abspath(os.path.normpath(base))
+            rel = os.path.relpath(absolute, base_abs)
+            if not rel.startswith("..") and not os.path.isabs(rel):
+                if base_abs == os.path.abspath(os.path.normpath(str(Path.home()))):
+                    rel = os.path.join("~", rel)
+                return rel.replace(os.sep, "/")
+    except Exception:
+        return cleaned
+    return cleaned
 
 
 def _task_title(payload: dict[str, Any]) -> str:
