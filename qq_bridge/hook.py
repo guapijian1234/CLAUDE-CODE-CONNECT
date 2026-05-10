@@ -94,7 +94,7 @@ def enqueue_progress(active: dict[str, Any], text: str, settings: Settings) -> N
     if settings.progress_mode == "full":
         storage.insert_outbox(
             **kwargs,
-            message_format="markdown" if settings.markdown_enabled else "text",
+            message_format="markdown",
         )
     else:
         storage.insert_progress_event(**kwargs)

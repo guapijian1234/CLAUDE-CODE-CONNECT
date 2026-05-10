@@ -63,7 +63,6 @@ class BridgeRuntime:
                 self.settings.channel_offline_reply,
                 reply_to=message.message_id,
                 source_message_id=message.id,
-                message_format="text",
             )
             return
 
@@ -78,10 +77,9 @@ class BridgeRuntime:
             if self.settings.progress_enabled and self.settings.progress_ack_enabled:
                 await self.bot.send_text(
                     message.chat_id,
-                    "已收到，正在交给 Claude Code 处理。后续执行步骤会同步到这里。",
+                    "已收到，正在处理。后续执行步骤会同步到这里。",
                     reply_to=message.message_id,
                     source_message_id=message.id,
-                    message_format="text",
                 )
         else:
             storage.clear_active_chat()
@@ -91,7 +89,6 @@ class BridgeRuntime:
                 self.settings.channel_offline_reply,
                 reply_to=message.message_id,
                 source_message_id=message.id,
-                message_format="text",
             )
 
     async def start_bot(self) -> asyncio.Task[None]:

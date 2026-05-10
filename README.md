@@ -58,7 +58,6 @@ QQ_BRIDGE_BOT_APP_SECRET=your_app_secret_here
 QQ_BRIDGE_ALLOWED_USERS=
 QQ_BRIDGE_ALLOWED_GROUPS=
 QQ_BRIDGE_MESSAGE_CHUNK_SIZE=1800
-QQ_BRIDGE_MARKDOWN_ENABLED=true
 QQ_BRIDGE_MARKDOWN_FALLBACK_TO_TEXT=true
 ```
 
@@ -159,7 +158,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-claude-autostart.ps1 
 
 ## Markdown 回复
 
-Claude Code 通过 `reply` 或 `send` 工具发往 QQ 的内容默认按 QQ Markdown 发送：
+Claude Code 通过 `reply` 或 `send` 工具发往 QQ 的内容，以及 bridge 自动发送的确认、状态、进度消息，都会优先按 QQ Markdown 发送：
 
 ```json
 {
@@ -170,10 +169,10 @@ Claude Code 通过 `reply` 或 `send` 工具发往 QQ 的内容默认按 QQ Mark
 }
 ```
 
-如果 QQ 平台或机器人权限不允许 Markdown，bridge 会自动降级为普通文本。可以通过环境变量关闭：
+如果 QQ 平台或机器人权限不允许 Markdown，bridge 会自动降级为普通文本。可以通过环境变量关闭降级：
 
 ```env
-QQ_BRIDGE_MARKDOWN_ENABLED=false
+QQ_BRIDGE_MARKDOWN_FALLBACK_TO_TEXT=false
 ```
 
 ## 进度回传
@@ -183,7 +182,6 @@ QQ_BRIDGE_MARKDOWN_ENABLED=false
 默认是 `normal` 模式：1.5 秒内的 Claude Code 可见叙述和工具调用会合并成一条 QQ 消息，例如：
 
 ```text
-Claude Code
 ● Now let me read the remaining handler files and key template files
 Read models/payment.go
 Read handlers/auth.go

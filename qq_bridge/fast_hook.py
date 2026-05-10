@@ -33,7 +33,6 @@ SENSITIVE_RE = re.compile(
 class HookSettings:
     db_path: str = "data/bridge.db"
     log_path: str = "logs/qq_bridge.log"
-    markdown_enabled: bool = True
     progress_enabled: bool = True
     progress_level: str = "normal"
     progress_active_ttl_seconds: int = 7200
@@ -122,7 +121,7 @@ def enqueue_progress(
                 chat_type,
                 target_id,
                 text,
-                "markdown" if settings.markdown_enabled else "text",
+                "markdown",
                 reply_msg_id or None,
                 active.get("source_message_id"),
                 utc_now(),
@@ -437,7 +436,6 @@ def load_settings() -> HookSettings:
     return HookSettings(
         db_path=_cfg(values, "DB_PATH", "data/bridge.db"),
         log_path=_cfg(values, "LOG_PATH", "logs/qq_bridge.log"),
-        markdown_enabled=_cfg_bool(values, "MARKDOWN_ENABLED", True),
         progress_enabled=_cfg_bool(values, "PROGRESS_ENABLED", True),
         progress_level=_cfg(values, "PROGRESS_LEVEL", "normal"),
         progress_active_ttl_seconds=_cfg_int(values, "PROGRESS_ACTIVE_TTL_SECONDS", 7200, 60, 86400),

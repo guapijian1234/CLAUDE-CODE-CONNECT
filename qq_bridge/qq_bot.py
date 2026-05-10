@@ -143,7 +143,7 @@ class QQBotService:
 
         command_reply = self._handle_builtin_command(incoming, public_only=True)
         if command_reply is not None:
-            await self.send_text(incoming.chat_id, command_reply, reply_to=incoming.message_id, message_format="text")
+            await self.send_text(incoming.chat_id, command_reply, reply_to=incoming.message_id)
             storage.update_message_status(incoming.id, "processed", command_reply)
             return
 
@@ -152,13 +152,13 @@ class QQBotService:
                 "This QQ sender is not allowed. Send /id to get identifiers for "
                 "QQ_BRIDGE_ALLOWED_USERS or QQ_BRIDGE_ALLOWED_GROUPS."
             )
-            await self.send_text(incoming.chat_id, text, reply_to=incoming.message_id, message_format="text")
+            await self.send_text(incoming.chat_id, text, reply_to=incoming.message_id)
             storage.update_message_status(incoming.id, "rejected", text)
             return
 
         command_reply = self._handle_builtin_command(incoming)
         if command_reply is not None:
-            await self.send_text(incoming.chat_id, command_reply, reply_to=incoming.message_id, message_format="text")
+            await self.send_text(incoming.chat_id, command_reply, reply_to=incoming.message_id)
             storage.update_message_status(incoming.id, "processed", command_reply)
             return
 
@@ -175,7 +175,6 @@ class QQBotService:
                 incoming.chat_id,
                 f"Bridge error: {truncate(str(exc), 600)}",
                 reply_to=incoming.message_id,
-                message_format="text",
             )
 
     def _save_message(
@@ -264,7 +263,7 @@ class QQBotService:
     ) -> list[int]:
         chat_type, target_id = parse_chat_id(chat_id)
         if message_format is None:
-            message_format = "markdown" if self.settings.markdown_enabled else "text"
+            message_format = "markdown"
         if message_format not in {"text", "markdown"}:
             raise ValueError("message_format must be text or markdown")
 
@@ -320,13 +319,12 @@ class QQBotService:
             if not content:
                 storage.mark_progress_batch_sent(ids)
                 return
-            message_format = "markdown" if self.settings.markdown_enabled else "text"
             for index, chunk in enumerate(split_text(content, self.settings.message_chunk_size)):
                 storage.insert_outbox(
                     chat_type=str(first["chat_type"]),
                     target_id=str(first["target_id"]),
                     content=chunk,
-                    message_format=message_format,
+                    message_format="markdown",
                     reply_msg_id=first.get("reply_msg_id") if index == 0 else None,
                     source_message_id=first.get("source_message_id"),
                 )
@@ -340,9 +338,7 @@ class QQBotService:
         lines = [str(item["content"]).strip() for item in batch if str(item["content"]).strip()]
         if not lines:
             return ""
-        if len(lines) == 1:
-            return lines[0]
-        return "Claude Code\n" + "\n".join(lines)
+        return "\n".join(lines)
 
     async def _send_item(self, item: dict[str, Any]) -> str | None:
         if not self.client:

@@ -26,7 +26,6 @@ class Settings(BaseSettings):
     allowed_users: str = ""
     allowed_groups: str = ""
     message_chunk_size: int = Field(default=1800, ge=200, le=4000)
-    markdown_enabled: bool = True
     markdown_fallback_to_text: bool = True
     progress_enabled: bool = True
     progress_level: str = "normal"
@@ -38,10 +37,7 @@ class Settings(BaseSettings):
     progress_reply_to_source: bool = False
     progress_include_assistant_text: bool = True
     progress_transcript_tail_bytes: int = Field(default=1_000_000, ge=0, le=50_000_000)
-    channel_offline_reply: str = (
-        "Claude Code channel is not connected. Start the existing Claude Code session "
-        "with the QQ channel plugin enabled."
-    )
+    channel_offline_reply: str = "当前会话通道未连接。请重新启动 claude，并确认已加载 QQ channel。"
 
     model_config = {
         "env_prefix": "QQ_BRIDGE_",
