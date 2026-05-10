@@ -80,11 +80,19 @@ function Install-McpServer {
     & $RealClaude mcp add -s user qq-bridge -- python -m qq_bridge mcp | Out-Host
 }
 
+function Install-ClaudeHooks {
+    & python -m qq_bridge install-hooks | Out-Host
+}
+
 function Uninstall-McpServer {
     $oldErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     & $RealClaude mcp remove -s user qq-bridge *> $null
     $ErrorActionPreference = $oldErrorActionPreference
+}
+
+function Uninstall-ClaudeHooks {
+    & python -m qq_bridge uninstall-hooks | Out-Host
 }
 
 function Install-PathWrapper {
@@ -151,9 +159,11 @@ $cleaned = [regex]::Replace($existing, $pattern, "")
 if ($Uninstall) {
     Set-Content -LiteralPath $ProfilePath -Value $cleaned -Encoding UTF8
     Uninstall-McpServer
+    Uninstall-ClaudeHooks
     Uninstall-PathWrapper
     Write-Host "Removed Claude QQ autostart from $ProfilePath"
     Write-Host "Removed qq-bridge from $GlobalMcpPath"
+    Write-Host "Removed qq-bridge progress hooks from $ClaudeConfigDir\settings.json"
     Write-Host "Removed PATH wrapper from $WrapperDir"
     exit 0
 }
@@ -208,10 +218,12 @@ $EndMarker
 $newContent = $cleaned.TrimEnd() + [Environment]::NewLine + [Environment]::NewLine + $block + [Environment]::NewLine
 Set-Content -LiteralPath $ProfilePath -Value $newContent -Encoding UTF8
 Install-McpServer
+Install-ClaudeHooks
 Install-PathWrapper
 
 Write-Host "Installed Claude QQ autostart into $ProfilePath"
 Write-Host "Installed qq-bridge MCP server into $GlobalMcpPath"
+Write-Host "Installed qq-bridge progress hooks into $ClaudeConfigDir\settings.json"
 Write-Host "Installed PATH wrapper into $WrapperCmd"
 if ($ProjectOnly) {
     Write-Host "Scope: this project only"

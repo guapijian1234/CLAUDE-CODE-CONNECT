@@ -67,10 +67,24 @@ class BridgeRuntime:
             )
             return
 
+        storage.set_active_chat(
+            chat_id=message.chat_id,
+            reply_msg_id=message.message_id,
+            source_message_id=message.id,
+        )
         delivered = await self.publisher.publish(content=message.content, meta=channel_meta(message))
         if delivered:
             storage.update_message_status(message.id, "delivered")
+            if self.settings.progress_enabled and self.settings.progress_ack_enabled:
+                await self.bot.send_text(
+                    message.chat_id,
+                    "已收到，正在交给 Claude Code 处理。后续执行步骤会同步到这里。",
+                    reply_to=message.message_id,
+                    source_message_id=message.id,
+                    message_format="text",
+                )
         else:
+            storage.clear_active_chat()
             storage.update_message_status(message.id, "failed", error_info="failed to publish channel notification")
             await self.bot.send_text(
                 message.chat_id,

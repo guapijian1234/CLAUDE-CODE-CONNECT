@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     message_chunk_size: int = Field(default=1800, ge=200, le=4000)
     markdown_enabled: bool = True
     markdown_fallback_to_text: bool = True
+    progress_enabled: bool = True
+    progress_ack_enabled: bool = True
+    progress_active_ttl_seconds: int = Field(default=7200, ge=60, le=86400)
+    progress_max_length: int = Field(default=500, ge=120, le=2000)
+    progress_reply_to_source: bool = False
     channel_offline_reply: str = (
         "Claude Code channel is not connected. Start the existing Claude Code session "
         "with the QQ channel plugin enabled."

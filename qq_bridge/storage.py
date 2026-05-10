@@ -5,6 +5,8 @@ from __future__ import annotations
 import sqlite3
 import threading
 from datetime import datetime
+import json
+import time
 from typing import Any
 
 from .config import get_settings
@@ -81,6 +83,12 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_msg_status ON messages(status);
         CREATE INDEX IF NOT EXISTS idx_msg_created ON messages(created_at);
         CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox(status);
+
+        CREATE TABLE IF NOT EXISTS bridge_state (
+            key             TEXT PRIMARY KEY,
+            value           TEXT NOT NULL,
+            updated_at      TEXT NOT NULL
+        );
         """
     )
     _add_column(conn, "messages", "chat_id", "TEXT")
@@ -90,6 +98,68 @@ def init_db() -> None:
     _add_column(conn, "outbox", "message_format", "TEXT NOT NULL DEFAULT 'text'")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_msg_chat ON messages(chat_id)")
     conn.commit()
+
+
+def set_state(key: str, value: str) -> None:
+    conn = _get_conn()
+    conn.execute(
+        """
+        INSERT INTO bridge_state (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+        """,
+        (key, value, utc_now()),
+    )
+    conn.commit()
+
+
+def get_state(key: str) -> str | None:
+    conn = _get_conn()
+    row = conn.execute("SELECT value FROM bridge_state WHERE key=?", (key,)).fetchone()
+    return str(row["value"]) if row else None
+
+
+def delete_state(key: str) -> None:
+    conn = _get_conn()
+    conn.execute("DELETE FROM bridge_state WHERE key=?", (key,))
+    conn.commit()
+
+
+def set_active_chat(
+    *,
+    chat_id: str,
+    reply_msg_id: str | None,
+    source_message_id: int | None,
+) -> None:
+    payload = {
+        "chat_id": chat_id,
+        "reply_msg_id": reply_msg_id,
+        "source_message_id": source_message_id,
+        "started_at": int(time.time()),
+    }
+    set_state("active_chat", json.dumps(payload, ensure_ascii=False))
+
+
+def get_active_chat(max_age_seconds: int | None = None) -> dict[str, Any] | None:
+    raw = get_state("active_chat")
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        delete_state("active_chat")
+        return None
+
+    if max_age_seconds is not None:
+        started_at = int(payload.get("started_at") or 0)
+        if not started_at or time.time() - started_at > max_age_seconds:
+            delete_state("active_chat")
+            return None
+    return payload
+
+
+def clear_active_chat() -> None:
+    delete_state("active_chat")
 
 
 def insert_message(
